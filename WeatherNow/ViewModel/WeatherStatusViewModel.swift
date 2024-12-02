@@ -47,66 +47,94 @@ class WeatherStatusViewModel: ObservableObject {
         }
     }
 
-    /// Fetch the weather icon for a given location, leveraging Combine.
-    func fetchWeatherIcon(for location: Location) -> AnyPublisher<UIImage?, Never> {
-        guard let cityName = location.cityName else {
-            return Just(nil).eraseToAnyPublisher()
+    /// Fetch weather details for a specific location and save to Core Data.
+    func fetchWeatherDetails(for location: Location) -> AnyPublisher<(Double, Double, String, UIImage?), Never> {
+        let cacheKey = NSString(string: location.cityName ?? "Unknown")
+
+        // Check cached weather data
+        if let cachedResponse = weatherCache.object(forKey: cacheKey) {
+            let temperature = cachedResponse.main.temp
+            let feelsLike = cachedResponse.main.feels_like
+            let description = cachedResponse.weather.first?.description ?? "N/A"
+
+            return fetchWeatherIcon(for: cachedResponse.weather.first?.icon)
+                .map { icon in
+                    (temperature, feelsLike, description, icon ?? UIImage(systemName: "cloud.fill"))
+                }
+                .eraseToAnyPublisher()
         }
 
-        // Use cached icon if available
-        if let cachedIcon = iconCache.object(forKey: cityName as NSString) {
-            return Just(cachedIcon).eraseToAnyPublisher()
-        }
-
-        // Fetch weather data to get the icon code
-        return Future<UIImage?, Never> { [weak self] promise in
+        // Fetch new weather data if not cached
+        return Future<(Double, Double, String, UIImage?), Never> { [weak self] promise in
             WeatherService.shared.fetchWeather(for: location.latitude, longitude: location.longitude) { result in
                 switch result {
                 case .success(let response):
-                    if let iconCode = response.weather.first?.icon {
-                        WeatherService.shared.fetchWeatherIcon(for: iconCode) { icon in
-                            if let icon = icon {
-                                self?.iconCache.setObject(icon, forKey: cityName as NSString) // Cache the icon
-                            }
-                            promise(.success(icon))
+                    let temperature = response.main.temp
+                    let feelsLike = response.main.feels_like
+                    let description = response.weather.first?.description ?? "N/A"
+                    self?.weatherCache.setObject(response, forKey: cacheKey) // Cache weather response
+
+                    self?.saveWeatherDetails(to: location, temperature: temperature, feelsLike: feelsLike, description: description)
+
+                    self?.fetchWeatherIcon(for: response.weather.first?.icon)
+                        .sink { icon in
+                            promise(.success((temperature, feelsLike, description, icon ?? UIImage(systemName: "cloud.fill"))))
                         }
-                    } else {
-                        promise(.success(nil))
-                    }
+                        .store(in: &self!.cancellables)
                 case .failure:
-                    promise(.success(nil))
+                    let storedData = self?.loadStoredWeatherDetails(for: location)
+                    promise(.success(storedData ?? (0.0, 0.0, "N/A", UIImage(systemName: "cloud.fill"))))
                 }
             }
         }
         .eraseToAnyPublisher()
     }
 
-    /// Fetch the weather details (temperature and feels like) for a location.
-    func fetchWeatherDetails(for location: Location) -> AnyPublisher<(String, String), Never> {
-        let cacheKey = NSString(string: location.cityName ?? "Unknown")
-
-        // Check if weather details are cached
-        if let cachedResponse = weatherCache.object(forKey: cacheKey) {
-            let temperature = String(format: "%.1f", cachedResponse.main.temp)
-            let feelsLike = String(format: "%.1f", cachedResponse.main.feels_like)
-            return Just((temperature, feelsLike)).eraseToAnyPublisher()
+    /// Fetch weather icon for a given icon code.
+    private func fetchWeatherIcon(for iconCode: String?) -> AnyPublisher<UIImage?, Never> {
+        guard let iconCode = iconCode else {
+            return Just(UIImage(systemName: "cloud.fill")).eraseToAnyPublisher()
         }
 
-        // Fetch from WeatherService if not cached
-        return Future<(String, String), Never> { [weak self] promise in
-            WeatherService.shared.fetchWeather(for: location.latitude, longitude: location.longitude) { result in
-                switch result {
-                case .success(let response):
-                    let temperature = String(format: "%.1f", response.main.temp)
-                    let feelsLike = String(format: "%.1f", response.main.feels_like)
-                    self?.weatherCache.setObject(response, forKey: cacheKey) // Cache the weather data
-                    promise(.success((temperature, feelsLike)))
-                case .failure:
-                    promise(.success(("N/A", "N/A")))
+        let cacheKey = NSString(string: iconCode)
+
+        // Use cached icon if available
+        if let cachedIcon = iconCache.object(forKey: cacheKey) {
+            return Just(cachedIcon).eraseToAnyPublisher()
+        }
+
+        // Fetch icon from network
+        return Future<UIImage?, Never> { [weak self] promise in
+            WeatherService.shared.fetchWeatherIcon(for: iconCode) { icon in
+                if let icon = icon {
+                    self?.iconCache.setObject(icon, forKey: cacheKey) // Cache the icon
                 }
+                promise(.success(icon ?? UIImage(systemName: "cloud.fill")))
             }
         }
         .eraseToAnyPublisher()
+    }
+
+    /// Save weather details to Core Data.
+    private func saveWeatherDetails(to location: Location, temperature: Double, feelsLike: Double, description: String) {
+        let context = CoreDataManager.shared.context
+        location.temperature = temperature
+        location.feelsLike = feelsLike
+        location.weatherDescription = description
+
+        do {
+            try context.save()
+        } catch {
+            print("Failed to save weather details: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load stored weather details from Core Data.
+    private func loadStoredWeatherDetails(for location: Location) -> (Double, Double, String, UIImage?) {
+        let temperature = location.temperature
+        let feelsLike = location.feelsLike
+        let description = location.weatherDescription ?? "N/A"
+        return (temperature, feelsLike, description, UIImage(systemName: "cloud.fill")) // Placeholder for offline
     }
 
     /// Subscribes to updates from `LocationRegistrationViewModel`, filtering duplicates by `cityName`.

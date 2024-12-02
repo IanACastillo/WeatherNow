@@ -48,7 +48,9 @@ class WeatherDetailViewModel: ObservableObject {
                     self.weatherCache.setObject(response, forKey: cacheKey) // Cache the result
                     self.updateWeatherUI(with: response)
                     self.fetchWeatherIcon(for: response.weather.first?.icon)
+                    self.saveWeatherDetails(to: response)
                 case .failure(let error):
+                    self.loadStoredWeatherDetails()
                     self.onError?(error.localizedDescription)
                 }
             }
@@ -82,5 +84,31 @@ class WeatherDetailViewModel: ObservableObject {
     /// - Parameter response: The weather response to use for the UI.
     private func updateWeatherUI(with response: WeatherResponse) {
         self.weatherResponse = response
+    }
+
+    /// Save weather details to Core Data.
+    private func saveWeatherDetails(to response: WeatherResponse) {
+        let context = CoreDataManager.shared.context
+        location.temperature = response.main.temp
+        location.feelsLike = response.main.feels_like
+        location.weatherDescription = response.weather.first?.description
+
+        do {
+            try context.save()
+        } catch {
+            print("Failed to save weather details: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load stored weather details from Core Data.
+    private func loadStoredWeatherDetails() {
+        // Ensure the structure aligns with the WeatherResponse model
+        let storedMain = WeatherResponse.Main(temp: location.temperature, feels_like: location.feelsLike)
+        let storedWeather = [WeatherResponse.Weather(description: location.weatherDescription ?? "N/A", icon: "")]
+
+        // Construct the WeatherResponse
+        let storedResponse = WeatherResponse(name: cityName, main: storedMain, weather: storedWeather)
+
+        self.weatherResponse = storedResponse
     }
 }

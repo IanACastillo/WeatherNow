@@ -60,20 +60,21 @@ class WeatherStatusViewController: UIViewController, UITableViewDelegate, UITabl
         let location = viewModel.location(at: indexPath.row)
 
         // Configure the cell with placeholder data
-        cell.configure(with: location, icon: UIImage(systemName: "cloud"), temperature: "--", feelsLike: "--")
+        cell.configure(
+            with: location,
+            icon: UIImage(systemName: "cloud"),
+            temperature: "--",
+            feelsLike: "--"
+        )
 
         // Fetch and update the weather details dynamically
         viewModel.fetchWeatherDetails(for: location)
             .receive(on: DispatchQueue.main)
-            .sink { temperature, feelsLike in
-                cell.updateWeatherDetails(temperature: temperature, feelsLike: feelsLike)
-            }
-            .store(in: &cancellables)
-
-        // Fetch and set the weather icon dynamically
-        viewModel.fetchWeatherIcon(for: location)
-            .receive(on: DispatchQueue.main)
-            .sink { icon in
+            .sink { temperature, feelsLike, description, icon in
+                let temperatureText = String(format: "%.1f", temperature) // Cast temperature to String
+                let feelsLikeText = String(format: "%.1f", feelsLike)     // Cast feelsLike to String
+                
+                cell.updateWeatherDetails(temperature: temperatureText, feelsLike: feelsLikeText)
                 cell.setWeatherIcon(icon)
             }
             .store(in: &cancellables)
